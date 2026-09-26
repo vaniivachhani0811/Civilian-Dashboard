@@ -1,0 +1,42 @@
+-- ============================================================
+-- 02_seed_data.sql — 20 complaints (Gujarati / Hindi / English)
+-- Inserts ONLY if COMPLAINTS is empty. Safe to rerun.
+-- ============================================================
+USE ROLE ACCOUNTADMIN;
+USE DATABASE CIVIC_TRIAGER;
+USE SCHEMA CORE;
+USE WAREHOUSE CIVIC_WH;
+
+INSERT INTO COMPLAINTS (submitted_at, citizen_name, ward, original_language, original_text)
+SELECT DATEADD('hour', -1 * v.$1, CURRENT_TIMESTAMP()), v.$2, v.$3, v.$4, v.$5
+  FROM (VALUES
+    (140, 'Ramesh Patel',   'Ward 1 - Maninagar',   'gu', 'અમારી શેરીમાં ગટર ઊભરાઈ ગઈ છે અને ગંદું પાણી ઘરોમાં ઘૂસી રહ્યું છે. ખૂબ દુર્ગંધ આવે છે.'),
+    (120, 'Sunita Sharma',  'Ward 1 - Maninagar',   'hi', 'पिछले तीन दिनों से हमारी गली में पानी की सप्लाई बंद है। छोटे बच्चों और बुजुर्गों को पीने का पानी भी नहीं मिल रहा।'),
+    (118, 'Arjun Mehta',    'Ward 1 - Maninagar',   'en', 'Drain cover near the Maninagar railway crossing is broken and sewage has been flowing onto the main road for two days.'),
+    (110, 'Vikram Singh',   'Ward 1 - Maninagar',   'hi', 'हमारे इलाके में बिजली का तार टूटकर सड़क पर गिरा हुआ है। बच्चे पास में खेलते हैं, कृपया तुरंत ठीक करें।'),
+    (100, 'Kiran Desai',    'Ward 2 - Vastrapur',   'gu', 'વસ્ત્રાપુર તળાવ પાસે મેનહોલનું ઢાંકણ ગાયબ છે. રાત્રે અંધારામાં કોઈ પડી શકે છે.'),
+    (96,  'Neha Joshi',     'Ward 2 - Vastrapur',   'en', 'Large potholes on the road outside the community hall. Two-wheelers keep skidding during the evening rush.'),
+    (90,  'Mahesh Parmar',  'Ward 2 - Vastrapur',   'gu', 'અમારી સોસાયટી પાસેની કચરાપેટી ચાર દિવસથી ખાલી કરવામાં આવી નથી. કૂતરાં કચરો ફેલાવે છે.'),
+    (85,  'Pooja Verma',    'Ward 3 - Satellite',   'hi', 'सैटेलाइट रोड पर बड़े गड्ढे की वजह से कल एक स्कूटर वाले का एक्सीडेंट हो गया। वह घायल है।'),
+    (80,  'Rahul Shah',     'Ward 3 - Satellite',   'en', 'Streetlights on the lane behind the Satellite police chowky have not worked for ten days. The area is very dark at night.'),
+    (75,  'Hetal Trivedi',  'Ward 3 - Satellite',   'gu', 'નળમાં આવતું પાણી પીળું અને ગંદું છે. ઘરમાં બે લોકો બીમાર પડ્યા છે.'),
+    (70,  'Imran Qureshi',  'Ward 4 - Navrangpura', 'hi', 'नवरंगपुरा बाजार के पास कचरे का ढेर एक हफ्ते से पड़ा है। बदबू से दुकानदार परेशान हैं।'),
+    (65,  'Priya Nair',     'Ward 4 - Navrangpura', 'en', 'The transformer near our building is sparking and making loud buzzing noises. Residents are scared it may catch fire.'),
+    (60,  'Dhruv Panchal',  'Ward 4 - Navrangpura', 'gu', 'વરસાદ પછી અમારી ગલીમાં પાણી ભરાયેલું રહે છે કારણ કે ગટરની લાઇન જામ છે.'),
+    (55,  'Anjali Gupta',   'Ward 5 - Naranpura',   'hi', 'हमारे मोहल्ले में पानी की पाइपलाइन लीक हो रही है और सड़क पर पानी बह रहा है।'),
+    (48,  'Chirag Bhatt',   'Ward 5 - Naranpura',   'gu', 'નારણપુરા ચાર રસ્તા પાસે રસ્તા પરના પટ્ટા ઝાંખા થઈ ગયા છે. ફરીથી રંગ કરાવવા વિનંતી.'),
+    (40,  'Sarah Thomas',   'Ward 5 - Naranpura',   'en', 'Park benches near the garden gate have graffiti and some litter. Not urgent, but it would be nice to clean up.'),
+    (30,  'Manoj Yadav',    'Ward 6 - Bopal',       'hi', 'बोपल में सीवर का पानी सड़क पर भर गया है। मच्छर बहुत बढ़ गए हैं और बीमारी का डर है।'),
+    (24,  'Nisha Rana',     'Ward 6 - Bopal',       'en', 'Low water pressure in the mornings for the past week. Upper floors get almost nothing before 9 am.'),
+    (12,  'Jayesh Solanki', 'Ward 6 - Bopal',       'gu', 'અમારી સોસાયટીમાં દિવસમાં ઘણી વાર વીજળી જાય છે. ઘરમાં ઓક્સિજન મશીન પર એક વડીલ છે.'),
+    (6,   'Deepak Chauhan', 'Ward 2 - Vastrapur',   'hi', 'वस्त्रापुर में सड़क के बीच में एक और मैनहोल खुला पड़ा है। रात को वहाँ रोशनी भी नहीं है।')
+  ) AS v
+ WHERE (SELECT COUNT(*) FROM COMPLAINTS) = 0;
+
+-- ---- Check: what is in the table, and has Step 3 already processed it? ----
+SELECT COUNT(*)                                                  AS total,
+       COUNT_IF(category IS NULL)                                AS not_processed_yet,
+       COUNT_IF(LOWER(original_language) IN ('gu', 'gujarati'))  AS gujarati,
+       COUNT_IF(LOWER(original_language) IN ('hi', 'hindi'))     AS hindi,
+       COUNT_IF(LOWER(original_language) IN ('en', 'english'))   AS english
+  FROM COMPLAINTS;
