@@ -1,0 +1,50 @@
+-- ============================================================
+-- 01_setup.sql — CIVIC GRIEVANCE TRIAGER (fixed)
+-- ============================================================
+USE ROLE ACCOUNTADMIN;
+
+CREATE WAREHOUSE IF NOT EXISTS CIVIC_WH
+  WAREHOUSE_SIZE = 'XSMALL'
+  AUTO_SUSPEND = 60
+  AUTO_RESUME = TRUE
+  INITIALLY_SUSPENDED = TRUE;
+
+CREATE DATABASE IF NOT EXISTS CIVIC_TRIAGER;
+CREATE SCHEMA IF NOT EXISTS CIVIC_TRIAGER.CORE;
+
+USE DATABASE CIVIC_TRIAGER;
+USE SCHEMA CORE;
+USE WAREHOUSE CIVIC_WH;
+
+CREATE TABLE IF NOT EXISTS COMPLAINTS (
+    complaint_id      NUMBER AUTOINCREMENT START 1 INCREMENT 1 PRIMARY KEY,
+    submitted_at      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    citizen_name      VARCHAR,
+    ward              VARCHAR,
+    original_language VARCHAR,
+    original_text     VARCHAR,
+    translated_text   VARCHAR,
+    category          VARCHAR,
+    sentiment_score   FLOAT,
+    urgency_score     NUMBER,
+    clerk_summary     VARCHAR,
+    status            VARCHAR DEFAULT 'New',
+    reply_text        VARCHAR
+);
+
+-- WARDS is reference only (app does not read it) -> rebuild clean every time
+CREATE OR REPLACE TABLE WARDS (
+    ward_id   NUMBER,
+    ward_name VARCHAR
+);
+
+INSERT INTO WARDS (ward_id, ward_name) VALUES
+    (1, 'Ward 1 - Maninagar'),
+    (2, 'Ward 2 - Vastrapur'),
+    (3, 'Ward 3 - Satellite'),
+    (4, 'Ward 4 - Navrangpura'),
+    (5, 'Ward 5 - Naranpura'),
+    (6, 'Ward 6 - Bopal');
+
+SELECT 'Setup complete.' AS status,
+       (SELECT COUNT(*) FROM COMPLAINTS) AS complaints_in_table;
