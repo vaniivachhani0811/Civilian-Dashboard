@@ -1,0 +1,29 @@
+USE ROLE ACCOUNTADMIN;
+USE DATABASE CIVIC_TRIAGER;
+USE SCHEMA CORE;
+USE WAREHOUSE CIVIC_WH;
+
+ALTER TABLE COMPLAINTS SET CHANGE_TRACKING = TRUE;
+
+CREATE OR REPLACE CORTEX SEARCH SERVICE COMPLAINT_SEARCH
+  ON search_text
+  ATTRIBUTES ward, category
+  WAREHOUSE = CIVIC_WH
+  TARGET_LAG = '1 minute'
+  AS (
+    SELECT complaint_id,
+           ward,
+           category,
+           urgency_score,
+           status,
+           clerk_summary,
+           TO_VARCHAR(submitted_at, 'YYYY-MM-DD HH24:MI') AS submitted_at,
+           COALESCE(translated_text, original_text) AS search_text
+      FROM CIVIC_TRIAGER.CORE.COMPLAINTS
+     WHERE category IS NOT NULL
+  );
+
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+  'CIVIC_TRIAGER.CORE.COMPLAINT_SEARCH',
+  '{"query": "sewage water overflowing on the road", "columns": ["complaint_id", "ward", "category", "clerk_summary"], "limit": 3}'
+) AS results;
