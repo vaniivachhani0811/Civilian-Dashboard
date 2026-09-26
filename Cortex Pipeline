@@ -1,0 +1,130 @@
+-- ============================================================
+-- 03_cortex_pipeline.sql — CORTEX PROCESSING PIPELINE (v2)
+-- Run AFTER 02_seed_data.sql.  Cmd+A -> Run All.
+-- ============================================================
+USE ROLE ACCOUNTADMIN;
+USE DATABASE CIVIC_TRIAGER;
+USE SCHEMA CORE;
+USE WAREHOUSE CIVIC_WH;
+
+-- Lets claude-sonnet-4-5 run even if it is not hosted in your account's region
+ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';
+
+-- Optional: to reprocess ALL rows from scratch, uncomment and run this line once
+-- UPDATE COMPLAINTS SET translated_text = NULL, category = NULL, sentiment_score = NULL, urgency_score = NULL, clerk_summary = NULL;
+
+CREATE OR REPLACE PROCEDURE PROCESS_COMPLAINT(p_complaint_id NUMBER)
+RETURNS VARCHAR
+LANGUAGE SQL
+AS
+$$
+DECLARE
+    v_lang VARCHAR;
+    v_text VARCHAR;
+    v_translated VARCHAR;
+    v_category VARCHAR;
+    v_sentiment FLOAT;
+    v_urgency NUMBER;
+    v_summary VARCHAR;
+    v_llm_response VARCHAR;
+BEGIN
+    -- 1. Read complaint, normalize language code (works for 'gu' or 'Gujarati' etc.)
+    SELECT CASE
+               WHEN LOWER(TRIM(original_language)) IN ('en', 'english')  THEN 'en'
+               WHEN LOWER(TRIM(original_language)) IN ('hi', 'hindi')    THEN 'hi'
+               WHEN LOWER(TRIM(original_language)) IN ('gu', 'gujarati') THEN 'gu'
+               ELSE 'other'
+           END,
+           original_text
+      INTO :v_lang, :v_text
+      FROM COMPLAINTS
+     WHERE complaint_id = :p_complaint_id;
+
+    -- 2. Translate to English
+    --    Hindi -> Cortex TRANSLATE. Gujarati/other -> COMPLETE (TRANSLATE has no Gujarati).
+    IF (v_lang = 'en') THEN
+        v_translated := v_text;
+    ELSEIF (v_lang = 'hi') THEN
+        SELECT SNOWFLAKE.CORTEX.TRANSLATE(:v_text, 'hi', 'en') INTO :v_translated;
+    ELSE
+        SELECT SNOWFLAKE.CORTEX.COMPLETE(
+            'claude-sonnet-4-5',
+            CONCAT('Translate this municipal civic complaint into English. ',
+                   'Output only the English translation, nothing else. Complaint: ', :v_text)
+        ) INTO :v_translated;
+    END IF;
+
+    -- 3. Classify category
+    SELECT SNOWFLAKE.CORTEX.CLASSIFY_TEXT(
+        :v_translated,
+        ['roads', 'water', 'electricity', 'garbage', 'drainage', 'other']
+    ):label::VARCHAR INTO :v_category;
+
+    -- 4. Sentiment score
+    SELECT SNOWFLAKE.CORTEX.SENTIMENT(:v_translated) INTO :v_sentiment;
+
+    -- 5. Urgency + clerk summary in one LLM call
+    SELECT SNOWFLAKE.CORTEX.COMPLETE(
+        'claude-sonnet-4-5',
+        CONCAT(
+            'You are triaging a municipal civic complaint for a city clerk. ',
+            'Read the complaint below and respond with ONLY a valid JSON object, ',
+            'no markdown, no explanation, in exactly this shape: ',
+            '{"urgency": <integer 1-5, where 5 is an immediate safety/health emergency ',
+            'and 1 is a minor cosmetic issue>, "summary": "<one plain sentence, under 20 words, ',
+            'telling a busy clerk exactly what is wrong and where>"}. ',
+            'Complaint: ', :v_translated
+        )
+    ) INTO :v_llm_response;
+
+    -- 6. Parse JSON safely (pulls the {...} part even if model adds fences or extra text)
+    SELECT TRY_PARSE_JSON(REGEXP_SUBSTR(:v_llm_response, '[{].*[}]', 1, 1, 's')):urgency::NUMBER,
+           TRY_PARSE_JSON(REGEXP_SUBSTR(:v_llm_response, '[{].*[}]', 1, 1, 's')):summary::VARCHAR
+      INTO :v_urgency, :v_summary;
+
+    -- 7. Write back
+    UPDATE COMPLAINTS
+       SET translated_text = :v_translated,
+           category        = :v_category,
+           sentiment_score = :v_sentiment,
+           urgency_score   = :v_urgency,
+           clerk_summary   = :v_summary
+     WHERE complaint_id = :p_complaint_id;
+
+    RETURN 'OK: complaint ' || p_complaint_id || ' -> ' || COALESCE(v_category, '?')
+           || ', urgency ' || COALESCE(TO_VARCHAR(v_urgency), '?');
+END;
+$$;
+
+-- ---- Backfill all unprocessed complaints (one bad row won't stop the loop) ----
+EXECUTE IMMEDIATE
+$$
+DECLARE
+    c CURSOR FOR SELECT complaint_id FROM COMPLAINTS WHERE category IS NULL ORDER BY complaint_id;
+    v_id NUMBER;
+    v_ok NUMBER DEFAULT 0;
+    v_failed NUMBER DEFAULT 0;
+BEGIN
+    FOR rec IN c DO
+        v_id := rec.complaint_id;
+        BEGIN
+            CALL PROCESS_COMPLAINT(:v_id);
+            v_ok := v_ok + 1;
+        EXCEPTION
+            WHEN OTHER THEN
+                v_failed := v_failed + 1;
+        END;
+    END FOR;
+    RETURN 'Backfill complete. OK: ' || v_ok || ', failed: ' || v_failed;
+END;
+$$;
+
+-- ---- Verify (last result shown after Run All) ----
+SELECT complaint_id,
+       original_language,
+       category,
+       urgency_score,
+       ROUND(sentiment_score, 2) AS sentiment,
+       clerk_summary
+  FROM COMPLAINTS
+ ORDER BY urgency_score DESC NULLS LAST, complaint_id;
